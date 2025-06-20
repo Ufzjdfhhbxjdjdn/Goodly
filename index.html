@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Ajjsh Transactions Viewer</title>
+  <style>
+    pre {
+      font-size: 12px;
+      white-space: pre-wrap;
+      word-wrap: break-word;
+      margin: 0;
+      padding: 0;
+    }
+    #formatBtn {
+      margin: 10px;
+      padding: 5px 10px;
+      font-size: 14px;
+      cursor: pointer;
+    }
+  </style>
+</head>
+<body>
+
+  <button id="formatBtn">🛠️ عرض النص بتنسيق محسّن</button>
+  <pre id="result">[</pre>
+
+  <script>
+    const processedTxIds = new Set(
+      JSON.parse(localStorage.getItem("processedTxIds") || "[]")
+    );
+
+    let fetching = false;
+    let isFirst = true;
+    const allTxs = [];
+
+    async function fetchTransactions() {
+      if (fetching) return;
+      fetching = true;
+
+      const basePath = "/Ajjsh";
+      const pathParts = window.location.pathname.replace(basePath, "").split("/").filter(Boolean);
+
+      let address = null;
+      if (
+        pathParts.length >= 4 &&
+        pathParts[0] === "api" &&
+        pathParts[1] === "address" &&
+        pathParts[3] === "txs"
+      ) {
+        address = pathParts[2];
+      }
+
+      if (!address) {
+        document.getElementById("result").textContent = "❌ لم يتم العثور على عنوان صالح في الرابط.";
+        return;
+      }
+
+      let lastTxId = null;
+
+      try {
+        let fetchedCount = 0;
+        let totalTxCount = 100000;
+
+        while (fetchedCount < totalTxCount) {
+          let url = `https://mempool.space/api/address/${address}/txs/chain`;
+          if (lastTxId) {
+            url += `/${lastTxId}`;
+          }
+
+          const response = await fetch(url);
+          if (!response.ok) {
+            throw new Error(`Error: ${response.statusText}`);
+          }
+
+          const data = await response.json();
+          if (data.length === 0) break;
+
+          const newTxs = data.filter((tx) => !processedTxIds.has(tx.txid));
+          newTxs.forEach((tx) => {
+            processedTxIds.add(tx.txid);
+            allTxs.push(tx);
+          });
+
+          fetchedCount += newTxs.length;
+          lastTxId = data[data.length - 1].txid;
+
+          displayTransactions(newTxs);
+          await new Promise((resolve) => setTimeout(resolve, 1000));
+        }
+
+        localStorage.setItem("processedTxIds", JSON.stringify([...processedTxIds]));
+        const resultDiv = document.getElementById("result");
+        resultDiv.innerHTML = resultDiv.innerHTML.replace(/,\s*$/, "");
+        console.log(`Fetched ${fetchedCount} transactions!`);
+      } catch (error) {
+        console.error("Error fetching transactions:", error);
+        document.getElementById("result").textContent = "⚠️ فشل في جلب المعاملات.";
+      }
+
+      fetching = false;
+    }
+
+    function displayTransactions(txs) {
+      const resultDiv = document.getElementById("result");
+      txs.forEach((tx) => {
+        const json = JSON.stringify(tx);
+        resultDiv.innerHTML += (isFirst ? "" : ",") + "\n" + json;
+        isFirst = false;
+      });
+    }
+
+    document.getElementById("formatBtn").addEventListener("click", () => {
+      const resultDiv = document.getElementById("result");
+      if (allTxs.length === 0) {
+        alert("⚠️ لا توجد بيانات لعرضها بتنسيق محسّن بعد.");
+        return;
+      }
+      resultDiv.textContent = JSON.stringify(allTxs, null, 2);
+    });
+
+    window.onload = fetchTransactions;
+  </script>
+
+</body>
+</html>
