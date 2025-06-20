@@ -1,119 +1,128 @@
 
 <!DOCTYPE html>
-<html lang="ar" dir="rtl">
+<html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <title>عرض المعاملات من عنوان</title>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Ajjsh Transactions Viewer</title>
   <style>
     body {
-      background: #000;
+      background-color: #000;
       color: #fff;
       font-family: monospace;
-      padding: 0;
-      margin: 0;
     }
-    #formatBar {
-      background-color: #1c1c1c;
-      padding: 5px 10px;
-      border-top: 1px solid #333;
-      font-size: 14px;
-      display: flex;
-      justify-content: flex-start;
-      align-items: center;
-      position: sticky;
-      top: 0;
-      z-index: 999;
-    }
-    #json {
-      padding: 10px;
+    pre {
+      font-size: 12px;
       white-space: pre-wrap;
       word-wrap: break-word;
-      direction: ltr;
+      margin: 0;
+      padding: 10px;
+    }
+    label {
+      display: flex;
+      align-items: center;
+      margin: 10px;
     }
     input[type="checkbox"] {
-      margin-left: 6px;
+      margin-left: 5px;
     }
   </style>
 </head>
 <body>
 
-  <div id="formatBar">
-    <label>
-      <input type="checkbox" id="toggleFormat" />
-      عرض النص بتنسيق محسّن
-    </label>
-  </div>
-
-  <pre id="json"></pre>
+  <label>
+    <input type="checkbox" id="formatCheckbox" />
+    <span>عرض النص بتنسيق محسّن</span>
+  </label>
+  <pre id="result">[</pre>
 
   <script>
-    function getAddressFromPath() {
-      const parts = window.location.pathname.split("/").filter(Boolean);
+    const processedTxIds = new Set(
+      JSON.parse(localStorage.getItem("processedTxIds") || "[]")
+    );
+    let isFirst = true;
+    const allTxs = [];
+
+    async function fetchTransactions() {
+      const basePath = "/";
+      const pathParts = window.location.pathname.replace(basePath, "").split("/").filter(Boolean);
+      let address = null;
+
       if (
-        parts.length >= 5 &&
-        parts[0] === "api" &&
-        parts[1] === "address" &&
-        parts[3] === "txs" &&
-        parts[4] === "chain"
+        pathParts.length >= 4 &&
+        pathParts[0] === "api" &&
+        pathParts[1] === "address" &&
+        pathParts[3] === "txs"
       ) {
-        return parts[2]; // العنوان في الجزء الثالث
+        address = pathParts[2];
       }
-      return null;
-    }
 
-    const address = getAddressFromPath();
-    const jsonElement = document.getElementById("json");
-    let allTxs = [];
-    let lastTxId = null;
-    let formatted = false;
+      if (!address) {
+        document.getElementById("result").textContent = "❌ لم يتم العثور على عنوان صالح في الرابط.";
+        return;
+      }
 
-    if (!address) {
-      jsonElement.textContent = "❌ لم يتم العثور على عنوان صالح في الرابط.";
-    } else {
-      const baseUrl = `https://blockstream.info/api/address/${address}/txs`;
+      let lastTxId = null;
+      let fetchedCount = 0;
+      let totalTxCount = 100000;
 
-      async function fetchAllTransactions() {
-        let keepGoing = true;
-        while (keepGoing) {
-          let url = lastTxId ? baseUrl + "/chain/" + lastTxId : baseUrl;
-          try {
-            const res = await fetch(url);
-            const data = await res.json();
-
-            if (!Array.isArray(data) || data.length === 0) {
-              keepGoing = false;
-              break;
-            }
-
-            allTxs.push(...data);
-            lastTxId = data[data.length - 1].txid;
-
-            window.rawData = allTxs;
-            renderData();
-
-            await new Promise(resolve => setTimeout(resolve, 500));
-          } catch (e) {
-            console.error("خطأ في تحميل البيانات:", e);
-            break;
+      try {
+        while (fetchedCount < totalTxCount) {
+          let url = `https://mempool.space/api/address/${address}/txs/chain`;
+          if (lastTxId) {
+            url += `/${lastTxId}`;
           }
+
+          const response = await fetch(url);
+          if (!response.ok) throw new Error(response.statusText);
+
+          const data = await response.json();
+          if (data.length === 0) break;
+
+          const newTxs = data.filter(tx => !processedTxIds.has(tx.txid));
+          newTxs.forEach(tx => {
+            processedTxIds.add(tx.txid);
+            allTxs.push(tx);
+          });
+
+          fetchedCount += newTxs.length;
+          lastTxId = data[data.length - 1].txid;
         }
+
+        localStorage.setItem("processedTxIds", JSON.stringify([...processedTxIds]));
+
+        const resultDiv = document.getElementById("result");
+        let output = "[";
+        output += allTxs.map(tx => JSON.stringify(tx)).join(",
+");
+        output += "]";
+        resultDiv.textContent = output;
+
+      } catch (err) {
+        document.getElementById("result").textContent = "⚠️ فشل في جلب المعاملات.";
+        console.error(err);
       }
-
-      function renderData() {
-        if (formatted) {
-          jsonElement.textContent = JSON.stringify(window.rawData, null, 2);
-        } else {
-          jsonElement.textContent = JSON.stringify(window.rawData);
-        }
-      }
-
-      document.getElementById('toggleFormat').addEventListener('change', function () {
-        formatted = this.checked;
-        renderData();
-      });
-
-      fetchAllTransactions();
     }
+
+    document.getElementById("formatCheckbox").addEventListener("change", (e) => {
+      const resultDiv = document.getElementById("result");
+      if (e.target.checked) {
+        if (allTxs.length === 0) {
+          alert("⚠️ لا توجد بيانات لعرضها بعد.");
+          e.target.checked = false;
+          return;
+        }
+        resultDiv.textContent = JSON.stringify(allTxs, null, 2);
+      } else {
+        let output = "[";
+        output += allTxs.map(tx => JSON.stringify(tx)).join(",
+");
+        output += "]";
+        resultDiv.textContent = output;
+      }
+    });
+
+    window.onload = fetchTransactions;
   </script>
 
 </body>
